@@ -6,6 +6,9 @@ name: daily-intel-radar
 
 on:
   schedule:
+    # 早间版：08:35 Asia/Shanghai = 00:35 UTC（隔夜全球信息 + 上一交易日 A股收盘）
+    - cron: "35 0 * * *"
+    # 收盘版：16:05 Asia/Shanghai = 08:05 UTC（A股当日收盘全量数据；周末也照常跑）
     - cron: "5 8 * * *"
   workflow_dispatch:
 

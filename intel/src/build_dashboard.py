@@ -2073,7 +2073,7 @@ _LIVE_JS = r"""
   var badge = document.createElement("div");
   badge.className = "live-badge";
   badge.setAttribute("data-testid", "live-badge");
-  badge.textContent = "○ 实时服务未连接";
+  badge.textContent = "○ 静态快照（实时需本机服务）";
   document.body.appendChild(badge);
 
   function setBadge(state, text, title) {
@@ -2124,7 +2124,7 @@ _LIVE_JS = r"""
     req.open("GET", LIVE_URL + "?t=" + Date.now(), true);
     req.timeout = 12000;
     req.onload = function () {
-      if (req.status !== 200) { setBadge("off", "○ 实时服务未连接"); return; }
+      if (req.status !== 200) { setBadge("off", "○ 静态快照（实时需本机服务）"); return; }
       var payload;
       try { payload = JSON.parse(req.responseText); } catch (e) { setBadge("off", "○ 实时数据解析失败"); return; }
       var n = 0, q = payload.quotes || {};
@@ -2135,7 +2135,7 @@ _LIVE_JS = r"""
         "● 实时 " + hhmmss(payload.generated_at) + (errs > 0 ? " · " + errs + " 项延迟" : " · 已更新"),
         "每 30 秒轮询 · 本次刷新 " + n + " 个字段");
     };
-    req.onerror = req.ontimeout = function () { setBadge("off", "○ 实时服务未连接"); };
+    req.onerror = req.ontimeout = function () { setBadge("off", "○ 静态快照（实时需本机服务）"); };
     req.send();
   }
   poll();

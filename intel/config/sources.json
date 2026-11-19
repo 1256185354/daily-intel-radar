@@ -9,6 +9,16 @@
     "kline_days": 60,
     "chart_min_max_points": 500
   },
+  "focus": {
+    "note": "「焦点事件」识别：重点公司（强）或重大事件词（次强）→ 热度加权 + 打「焦点」标签 + 简报/看板单列焦点板块",
+    "event_keywords": ["IPO", "上市", "挂牌", "暗盘", "招股", "并购", "收购", "重组", "退市", "破产", "财报", "业绩预告", "降息", "加息", "降准", "制裁", "关税", "停火", "开战", "地震", "台风", "爆炸", "历史新高", "历史新低"],
+    "companies": ["Anthropic", "OpenAI", "英伟达", "NVIDIA", "苹果", "Apple", "特斯拉", "Tesla", "美光", "Micron", "谷歌", "Google", "微软", "Microsoft", "Meta", "亚马逊", "Amazon", "台积电", "中芯国际", "华为", "小米", "比亚迪", "宁德时代", "寒武纪", "DeepSeek", "字节跳动", "阿里巴巴", "腾讯", "三星", "SK海力士", "波音", "美联储", "特朗普", "普京"],
+    "company_heat_boost": 1.9,
+    "event_heat_boost": 0.45,
+    "brief_top": 6,
+    "lookup_keywords": ["Anthropic", "OpenAI", "英伟达", "苹果", "特斯拉", "美光", "美联储", "中芯国际"],
+    "lookup_days": 3
+  },
   "categories": {
     "地缘政治": {
       "weight": 1.25,

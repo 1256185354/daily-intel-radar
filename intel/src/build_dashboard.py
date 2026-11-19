@@ -1390,6 +1390,33 @@ def _render_news(world, data_date: str) -> str:
     remaining = max(0, total - len(initial))
     items_html = "".join(_news_item(it, tones, max_heat, data_date) for it in initial)
     nodata = "" if news else '<div class="empty">今日数据缺失 · 全球要闻暂未采集到</div>'
+    # 焦点事件条：重点公司优先，其次重大事件/热度
+    focus_items = [it for it in news if it.get("focus")]
+    focus_items.sort(key=lambda it: (
+        bool(it.get("focus_company")),
+        _num(it.get("focus_score")) or 0.0,
+        _num(it.get("heat")) or 0.0,
+    ), reverse=True)
+    focus_html = ""
+    if focus_items:
+        rows = []
+        for it in focus_items[:4]:
+            url = _safe_url(it.get("url"))
+            title = _clean(it.get("title"), 110) or "（无标题）"
+            src = _clean(it.get("source"), 16) or "未知来源"
+            tm = _fmt_time(it.get("published"), data_date)
+            badge = "公司" if it.get("focus_company") else "事件"
+            text_html = _link(url, title, "ft") if url else f'<span class="ft">{_e(title)}</span>'
+            rows.append(
+                f'<div class="focus-row"><span class="fg">{badge}</span>{text_html}'
+                f'<span class="fs">{_e(src)} · {_e(tm)}</span></div>'
+            )
+        focus_html = (
+            '<div class="focus-band" id="focus-band" data-testid="focus-events">'
+            '<div class="fb-head"><span class="fb-title">焦点事件</span>'
+            f'<span class="fb-count">重点公司/重大事件 · Top 4 / 共 {len(focus_items)} 条</span></div>'
+            f'<div class="fb-list">{"".join(rows)}</div></div>'
+        )
     more_text = f"加载更多（剩余 {remaining} 条）" if remaining else "加载更多"
     more_hidden = "" if remaining else ' style="display:none"'
     more_html = (
@@ -1416,7 +1443,7 @@ def _render_news(world, data_date: str) -> str:
     )
     body = (
         f'<div class="chips">{"".join(chips)}</div>'
-        f"{tools}{nodata}"
+        f"{tools}{focus_html}{nodata}"
         '<div class="news-list" id="news-list">'
         f"{items_html}"
         "</div>"
@@ -2053,6 +2080,24 @@ def _render_footer(data) -> str:
 # live quotes overlay (optional): polls /intel/data/live.json written by
 # src/live_service.py.  Disabled automatically on file:// pages.
 # --------------------------------------------------------------------------- #
+_FOCUS_CSS = r"""
+/* ---------- 焦点事件条（重点公司/重大事件置顶） ---------- */
+.focus-band{margin:10px 0 12px;border:1px solid rgba(255,196,77,.35);border-radius:12px;
+  background:linear-gradient(135deg,rgba(255,196,77,.11),rgba(255,59,216,.05));padding:9px 11px 8px}
+.focus-band .fb-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.focus-band .fb-title{font-size:11.5px;letter-spacing:.6px;color:var(--amber);font-weight:650;font-family:var(--mono)}
+.focus-band .fb-count{font-size:10.5px;color:var(--dim);font-family:var(--mono)}
+.focus-band .fb-list{display:flex;flex-direction:column;gap:5px}
+.focus-row{display:flex;gap:8px;align-items:baseline;text-decoration:none;color:var(--txt);font-size:12.5px;line-height:1.45;min-width:0}
+.focus-row:hover .ft{color:var(--amber)}
+.focus-row .fg{flex:0 0 auto;font-size:9.5px;font-family:var(--mono);color:#2a1a05;background:var(--amber);
+  border-radius:4px;padding:1px 5px;transform:translateY(-1px)}
+.focus-row .ft{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.focus-row .fs{flex:0 0 auto;font-size:10.5px;color:var(--dim);font-family:var(--mono)}
+@media (max-width:820px){.focus-row .fs{display:none}.focus-row .ft{white-space:normal;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical}}
+"""
+
 _LIVE_CSS = r"""
 .live-badge{position:fixed;right:14px;bottom:14px;z-index:90;font-family:var(--mono);font-size:11px;
   letter-spacing:.3px;padding:6px 11px;border-radius:999px;border:1px solid var(--line2);
@@ -2948,7 +2993,7 @@ def _render_page(data, title, dates, archive_href, data_date) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_e(title)} · {_e(data_date or '看板')}</title>\n"
         '<meta name="color-scheme" content="dark">\n'
-        f"<style>{_CSS}{_LIVE_CSS}{_CHART_CSS}</style>\n</head>\n<body>\n{body}\n</body>\n</html>\n"
+        f"<style>{_CSS}{_FOCUS_CSS}{_LIVE_CSS}{_CHART_CSS}</style>\n</head>\n<body>\n{body}\n</body>\n</html>\n"
     )
 
 

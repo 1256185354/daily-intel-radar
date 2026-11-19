@@ -223,6 +223,165 @@ def _normalize_ashare(raw: dict, watchlist: list[dict]) -> dict:
     return result
 
 
+def _merge_news(world: dict, old_world: dict | None, extra_items: list[dict], cfg: dict) -> dict:
+    """合并：当天旧快照里的新闻 + 重点公司关键词回查结果（去重），并重算分类/热度。
+
+    背景：新闻流接口只返回「最新 50 条」，同一天多次运行（早间→收盘→手动）会丢掉早先抓到的重要新闻，
+    这里把旧快照与关键词回查结果保留下来，避免「Anthropic 早上抓到了、晚上重跑就没了」。
+    """
+    import re
+
+    def fix_highlight_spacing(text: str) -> str:
+        """修复搜索高亮标签被 strip 后留下的字母间空格：'An thr opi c' -> 'Anthropic'。
+
+        仅当标题里出现 ≥2 处「字母-空格-字母」时才合并（避免误伤 'US CPI' 这类正常空格）。
+        """
+        s = str(text or "")
+        if len(re.findall(r"(?<=[A-Za-z])\s+(?=[A-Za-z])", s)) >= 2:
+            s = re.sub(r"(?<=[A-Za-z])\s+(?=[A-Za-z])", "", s)
+        return s
+
+    news = list(world.get("news") or [])
+    for n in news:
+        n["title"] = fix_highlight_spacing(n.get("title"))
+    raw_extras = list((old_world or {}).get("news") or []) + list(extra_items or [])
+    extras = []
+    for n in raw_extras:
+        if isinstance(n, dict):
+            n = dict(n)
+            n["title"] = fix_highlight_spacing(n.get("title"))
+            extras.append(n)
+
+    def norm_title(s: str) -> str:
+        return re.sub(r"[\s\W_]+", "", str(s or "")).lower()[:60]
+
+    ids = {str(n.get("id") or "") for n in news}
+    titles = {norm_title(n.get("title")) for n in news}
+    added = 0
+    for item in extras:
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        iid = str(item.get("id") or "")
+        ntitle = norm_title(item.get("title"))
+        if (iid and iid in ids) or (ntitle and ntitle in titles):
+            continue
+        item = dict(item)
+        if not item.get("id"):
+            item["id"] = _news_id(item.get("source_id") or "merged", item.get("title") or "")
+        news.append(item)
+        ids.add(str(item["id"]))
+        titles.add(ntitle)
+        added += 1
+    if added:
+        common.log(f"merge: 合并历史/回查新闻 {added} 条")
+    # 重新统一打分（分类/热度），保证新旧条目同一口径
+    common.score_items(news, cfg, ref_time=common.now_cn())
+    news.sort(key=lambda x: common.safe_float(x.get("heat"), 0.0) or 0.0, reverse=True)
+    world["news"] = news
+    counts: dict[str, int] = {}
+    for n in news:
+        cat = n.get("category") or common.DEFAULT_CATEGORY
+        counts[cat] = counts.get(cat, 0) + 1
+    world["by_category"] = sorted(
+        [{"name": k, "count": v} for k, v in counts.items()], key=lambda x: -x["count"])
+    return world
+
+
+def _focus_lookup(cfg: dict, existing: list[dict] | None = None) -> list[dict]:
+    """按「重点公司」关键词回查东财新闻（近 N 天），补齐新闻流可能漏掉/被挤掉的重点报道。"""
+    focus_cfg = (cfg or {}).get("focus") or {}
+    keywords = [str(k).strip() for k in (focus_cfg.get("lookup_keywords") or []) if str(k).strip()]
+    days = int(common.safe_float(focus_cfg.get("lookup_days"), 3) or 3)
+    if not keywords:
+        return []
+    import urllib.parse
+    deadline = common.now_cn().timestamp() - days * 86400
+    seen = set()
+    for n in existing or []:
+        seen.add((n.get("title") or "").strip())
+    out: list[dict] = []
+    for kw in keywords:
+        try:
+            param = {
+                "uid": "", "keyword": kw, "type": ["cmsArticleWebOld"],
+                "client": "web", "clientType": "web", "clientVersion": "curr",
+                "param": {"cmsArticleWebOld": {
+                    "searchScope": "default", "sort": "time", "pageIndex": 1, "pageSize": 8,
+                    "preTag": "<em>", "postTag": "</em>"}},
+            }
+            url = ("https://search-api-web.eastmoney.com/search/jsonp?cb=cb&param="
+                   + urllib.parse.quote(json.dumps(param, ensure_ascii=False)))
+            data = common.http_get_json(url, retries=1, timeout=10, backoff=1.5)
+            arts = (((data.get("result") or {}).get("cmsArticleWebOld")) or [])
+            for art in arts:
+                raw_title = str(art.get("title") or "")
+                for _tag in ("<em>", "</em>", "<b>", "</b>", "<strong>", "</strong>"):
+                    raw_title = raw_title.replace(_tag, "")
+                title = common.clean_text(raw_title).replace("\n", " ").strip()
+                if not title or title in seen:
+                    continue
+                published = common.parse_dt_any(art.get("date"))
+                if published is None or published.timestamp() < deadline:
+                    continue
+                seen.add(title)
+                out.append({
+                    "id": _news_id("focus_lookup", title),
+                    "title": title,
+                    "summary": common.truncate(art.get("content"), 200),
+                    "url": (art.get("url") or "").strip(),
+                    "source": common.clean_text(art.get("mediaName")) or "东方财富",
+                    "source_id": "focus_lookup",
+                    "published": common.iso(published),
+                    "category": common.DEFAULT_CATEGORY,
+                    "tags": ["焦点"],
+                    "heat": 0.0,
+                })
+        except Exception as exc:  # noqa: BLE001
+            common.log(f"focus lookup「{kw}」失败: {type(exc).__name__}: {exc}")
+        continue
+    if out:
+        common.log(f"focus lookup: 回查补入 {len(out)} 条（关键词 {len(keywords)} 个）")
+    return out
+
+
+def _apply_focus(world: dict, cfg: dict) -> dict:
+    """焦点事件识别：重点公司（强）+ 重大事件词（次强）加权并打「焦点」标签。
+
+    news[].focus = true / focus_company = true / focus_score / focus_hits，
+    heat 按 company/event 命中数加权后重排；dashboard 与简报按 focus_score 优先展示。
+    """
+    focus_cfg = (cfg or {}).get("focus") or {}
+    events = [str(k) for k in (focus_cfg.get("event_keywords") or []) if str(k).strip()]
+    companies = [str(k) for k in (focus_cfg.get("companies") or []) if str(k).strip()]
+    if not events and not companies:
+        return world
+    c_boost = common.safe_float(focus_cfg.get("company_heat_boost"), 1.9) or 1.9
+    e_boost = common.safe_float(focus_cfg.get("event_heat_boost"), 0.45) or 0.45
+    news = world.get("news") or []
+    for item in news:
+        blob = f"{item.get('title', '')} {item.get('summary', '')}"
+        low = blob.lower()
+        c_hits = [c for c in companies if c.lower() in low]
+        e_hits = [e for e in events if e.lower() in low and e.lower() not in {h.lower() for h in c_hits}]
+        if not c_hits and not e_hits:
+            continue
+        item["focus"] = True
+        item["focus_company"] = bool(c_hits)
+        item["focus_hits"] = (c_hits + e_hits)[:5]
+        item["focus_score"] = 3 * min(len(c_hits), 2) + 1 * min(len(e_hits), 2)
+        heat = common.safe_float(item.get("heat"), 0.0) or 0.0
+        item["heat"] = round(heat * (1 + c_boost * min(len(c_hits), 2) + e_boost * min(len(e_hits), 2)), 1)
+        tags = [t for t in (item.get("tags") or []) if t != "焦点"]
+        item["tags"] = ["焦点"] + tags[:2]
+    news.sort(key=lambda x: common.safe_float(x.get("heat"), 0.0) or 0.0, reverse=True)
+    world["news"] = news
+    focus_news = [n for n in news if n.get("focus")]
+    world["focus_count"] = len(focus_news)
+    world["focus_company_count"] = sum(1 for n in focus_news if n.get("focus_company"))
+    common.log(f"focus: 焦点新闻 {world['focus_count']} 条（其中重点公司 {world['focus_company_count']} 条）")
+    return world
+
+
 def _collect_errors(world: dict, ashare: dict) -> list[dict]:
     errs = []
     for stage, seg in (("world", world), ("ashare", ashare)):
@@ -330,10 +489,16 @@ def main(argv=None) -> int:
     common.ensure_dir(os.path.join(day_dir, "raw"))
     cfg = _cfg()
     watchlist = _watchlist(args.watchlist, args.stocks)
+    old_data = common.load_json(os.path.join(day_dir, "data.json"), {}) or {}
     common.log(f"=== 每日情报雷达 {date_str} | 自选股 {len(watchlist)} 只 | offline={args.offline} ===")
 
     errors: list[dict] = []
     world, e1 = _run_world(date_str, cfg, args.offline)
+    if not args.offline:
+        old_world = old_data.get("world") if isinstance(old_data.get("world"), dict) else None
+        lookup = _focus_lookup(cfg, world.get("news"))
+        world = _merge_news(world, old_world, lookup, cfg)
+    world = _apply_focus(world, cfg)
     ashare, e2 = _run_ashare(date_str, watchlist, cfg, args.offline)
     errors.extend(e1)
     errors.extend(e2)

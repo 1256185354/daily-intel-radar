@@ -570,6 +570,21 @@ def _one_liner(ctx: dict) -> str:
 def _chapter_points(ctx: dict) -> list[str]:
     points: list[str] = []
 
+    # 0. 焦点事件（重大事件/重点公司；有则置顶，避免被普通新闻淹没）
+    focus_items = [item for item in ctx["news"] if item.get("focus")]
+    if focus_items:
+        focus_items.sort(key=lambda item: (
+            bool(item.get("focus_company")),
+            safe_float(item.get("focus_score"), 0.0) or 0.0,
+            safe_float(item.get("heat"), 0.0) or 0.0,
+        ), reverse=True)
+        briefs = "；".join(
+            f"《{_s(item.get('title'), 52)}》（{_s(item.get('source'), 20, '来源未知')} · "
+            f"{_fmt_time(item.get('published'), ctx['report_date'])}）"
+            for item in focus_items[:3]
+        )
+        points.append(f"焦点事件：{briefs}。今日共 {len(focus_items)} 条焦点新闻（重点公司/重大事件），完整列表见 2.2「焦点事件」。")
+
     # 1. 全球市场强弱
     strong, weak, market_n = _market_extremes(ctx["markets"])
     if strong is not None and weak is not None:
@@ -722,6 +737,23 @@ def _chapter_world(ctx: dict) -> list[str]:
     if not news and not ctx["by_category"]:
         lines += ["> 数据缺失：今日未获取到全球要闻。", ""]
         return lines
+
+    # 焦点事件（重大事件/重点公司）单独置顶，避免被海量普通新闻淹没
+    focus_items = [item for item in news if item.get("focus")]
+    if focus_items:
+        focus_items.sort(key=lambda item: (
+            bool(item.get("focus_company")),
+            safe_float(item.get("focus_score"), 0.0) or 0.0,
+            safe_float(item.get("heat"), 0.0) or 0.0,
+        ), reverse=True)
+        lines.append(f"#### 焦点事件（展示前 6 条 / 共 {len(focus_items)} 条）")
+        lines.append("")
+        for item in focus_items[:6]:
+            title = _link(item.get("title"), item.get("url"), 90)
+            source = _s(item.get("source"), 24, "来源未知")
+            when = _fmt_time(item.get("published"), ctx["report_date"])
+            lines.append(f"- {title} — {source} · {when}")
+        lines.append("")
 
     counts: dict[str, int] = {}
     for item in news:

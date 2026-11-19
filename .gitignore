@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+intel/data/
+intel/out/
+intel/verify/tmp/
+intel/config/publish.json
+intel/config/push.json
+intel/config/push.example.json

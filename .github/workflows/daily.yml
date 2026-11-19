@@ -1,0 +1,57 @@
+# 每日情报雷达 · GitHub Actions 云端采集 + Pages 发布
+# 放在仓库的 .github/workflows/daily.yml
+# 每天 08:05 UTC（= 16:05 Asia/Shanghai）在 GitHub 机房跑采集、构建单文件看板并发布到 Pages。
+# 注意：云端采集依赖东财/新浪接口在 GitHub 机房可达；若失败，可退回「电脑定时推送 gh-pages」方案。
+name: daily-intel-radar
+
+on:
+  schedule:
+    - cron: "5 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Collect data & build dashboard/report
+        env:
+          PYTHONIOENCODING: utf-8
+          TZ: Asia/Shanghai
+        run: |
+          python intel/src/run_daily.py --skip-share --skip-push --skip-publish
+      - name: Prepare static site
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python intel/src/build_site_artifact.py --out _site
+      - name: Show summary
+        run: |
+          ls -la _site || true
+          du -sh _site || true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
